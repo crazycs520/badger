@@ -215,7 +215,7 @@ func buildTableOptions(db *DB) table.Options {
 }
 
 const (
-	maxValueThreshold = (1 << 20) // 1 MB
+	maxValueThreshold = (8 << 20) // 8 MB
 )
 
 // LSMOnlyOptions follows from DefaultOptions, but sets a higher ValueThreshold
@@ -233,7 +233,7 @@ func LSMOnlyOptions(path string) Options {
 	// NOTE: If a user does not want to set 64KB as the ValueThreshold because
 	// of performance reasons, 1KB would be a good option too, allowing
 	// values smaller than 1KB to be collocated with the keys in the LSM tree.
-	return DefaultOptions(path).WithValueThreshold(maxValueThreshold /* 1 MB */)
+	return DefaultOptions(path).WithValueThreshold(maxValueThreshold /* 8 MB */)
 }
 
 // parseCompression returns badger.compressionType and compression level given compression string
@@ -503,7 +503,7 @@ func (opt Options) WithMaxLevels(val int) Options {
 // ValueThreshold sets the threshold used to decide whether a value is stored directly in the LSM
 // tree or separately in the log value files.
 //
-// The default value of ValueThreshold is 1 MB, but LSMOnlyOptions sets it to maxValueThreshold.
+// The default value of ValueThreshold is 8 MB, but LSMOnlyOptions sets it to maxValueThreshold.
 func (opt Options) WithValueThreshold(val int64) Options {
 	opt.ValueThreshold = val
 	return opt
