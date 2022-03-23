@@ -683,6 +683,7 @@ func (s *levelsController) subcompact(it y.Iterator, kr keyRange, cd compactDef,
 	addKeys := func(builder *table.Builder) {
 		timeStart := time.Now()
 		var numKeys, numSkips uint64
+		var expireKeyNum,versionLessNum, metaBitMergeNum, isDeletedNum int
 		var rangeCheck int
 		var tableKr keyRange
 		for ; it.Valid(); it.Next() {
@@ -743,6 +744,20 @@ func (s *levelsController) subcompact(it y.Iterator, kr keyRange, cd compactDef,
 
 			isExpired := isDeletedOrExpired(vs.Meta, vs.ExpiresAt)
 
+			if version <= discardTs {
+				versionLessNum++
+			}
+			if vs.Meta&bitMergeEntry == 0 {
+				metaBitMergeNum++
+			}
+			if isExpired {
+				expireKeyNum++
+			}
+			if vs.Meta&bitDelete > 0 {
+				isDeletedNum++
+			}
+
+
 			// Do not discard entries inserted by merge operator. These entries will be
 			// discarded once they're merged
 			if version <= discardTs && vs.Meta&bitMergeEntry == 0 {
@@ -799,8 +814,8 @@ func (s *levelsController) subcompact(it y.Iterator, kr keyRange, cd compactDef,
 				builder.Add(it.Key(), vs, vp.Len)
 			}
 		}
-		s.kv.opt.Debugf("[%d] LOG Compact. Added %d keys. Skipped %d keys. Iteration took: %v",
-			cd.compactorId, numKeys, numSkips, time.Since(timeStart).Round(time.Millisecond))
+		s.kv.opt.Infof("[%d] LOG Compact. Added %d keys. Skipped %d keys. Iteration took: %v, hasOverlap: %v, versionLessNum: %v, metaBitMergeNum: %v, expireKeyNum: %v, isDeletedNum: %v",
+			cd.compactorId, numKeys, numSkips, time.Since(timeStart).Round(time.Millisecond), hasOverlap, versionLessNum, metaBitMergeNum, expireKeyNum, isDeletedNum)
 	} // End of function: addKeys
 
 	if len(kr.left) > 0 {
@@ -1449,10 +1464,17 @@ func (s *levelsController) runCompactDef(id, l int, cd compactDef) (err error) {
 
 	// See comment earlier in this function about the ordering of these ops, and the order in which
 	// we access levels when reading.
-	if err := nextLevel.replaceTables(cd.bot, newTables); err != nil {
+
+	nextOriginTables := len(nextLevel.tables)
+	err = nextLevel.replaceTables(cd.bot, newTables);
+	s.kv.opt.Infof("next level( %v ), delete %v tables, replace %v new tables, origin_tables: %v, now has %v tables, err: %v, stale_size: %v", nextLevel.level, len(cd.bot), len(newTables), nextOriginTables , len(nextLevel.tables), err, nextLevel.getTotalStaleSize())
+	if err != nil {
 		return err
 	}
-	if err := thisLevel.deleteTables(cd.top); err != nil {
+	thisOriginTables := len(thisLevel.tables)
+	err = thisLevel.deleteTables(cd.top);
+	s.kv.opt.Infof("this level( %v ) delete %v tables,origin_tables: %v, now has %v tables, err: %v, stale_size: %v",thisLevel.level, len(cd.top),thisOriginTables, len(thisLevel.tables), err, thisLevel.getTotalStaleSize())
+	if err != nil {
 		return err
 	}
 
@@ -1495,6 +1517,7 @@ var errFillTables = errors.New("Unable to fill tables")
 
 // doCompact picks some table on level l and compacts it away to the next level.
 func (s *levelsController) doCompact(id int, p compactionPriority) error {
+	s.kv.opt.Warningf("badger do compact on level %v\n",p.level)
 	l := p.level
 	y.AssertTrue(l < s.kv.opt.MaxLevels) // Sanity check.
 	if p.t.baseLevel == 0 {
@@ -1571,6 +1594,8 @@ func (s *levelsController) addLevel0Table(t *table.Table) error {
 		}
 		atomic.AddInt64(&s.l0stallsMs, int64(dur.Round(time.Millisecond)))
 	}
+	s.kv.opt.Infof("add table to L0, L0 has %v tables, total size is: %v\n", s.levels[0].numTables(),
+		s.levels[0].getTotalSize())
 
 	return nil
 }

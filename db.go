@@ -40,6 +40,8 @@ import (
 	"github.com/dgraph-io/ristretto/z"
 	humanize "github.com/dustin/go-humanize"
 	"github.com/pkg/errors"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 var (
@@ -989,6 +991,8 @@ func (db *DB) batchSetAsync(entries []*Entry, f func(error)) error {
 
 var errNoRoom = errors.New("No room for write")
 
+var lastLogMemTableInfoTime= time.Now()
+
 // ensureRoomForWrite is always called serially.
 func (db *DB) ensureRoomForWrite() error {
 	var err error
@@ -996,13 +1000,23 @@ func (db *DB) ensureRoomForWrite() error {
 	defer db.lock.Unlock()
 
 	y.AssertTrue(db.mt != nil) // A nil mt indicates that DB is being closed.
+
+	if time.Since(lastLogMemTableInfoTime) > time.Second * 10 {
+		lastLogMemTableInfoTime = time.Now()
+		log.Info("badger mem table size", zap.Int64("size(KB)", db.mt.sl.MemSize()/1024),
+			zap.Int("wal_write_at(KB)", int(db.mt.wal.writeAt)/1024),
+			zap.Int("imm-len", len(db.imm)),
+			zap.Bool("mem-is-full", db.mt.isFull()))
+	}
+
 	if !db.mt.isFull() {
 		return nil
 	}
 
 	select {
 	case db.flushChan <- flushTask{mt: db.mt}:
-		db.opt.Debugf("Flushing memtable, mt.size=%d size of flushChan: %d\n",
+		log.Info("badger flush memtable")
+		db.opt.Infof("Flushing memtable, mt.size=%d size of flushChan: %d\n",
 			db.mt.sl.MemSize(), len(db.flushChan))
 		// We manage to push this task. Let's modify imm.
 		db.imm = append(db.imm, db.mt)
@@ -1198,6 +1212,7 @@ func (db *DB) flushMemtable(lc *z.Closer) error {
 			continue
 		}
 		sz = ft.mt.sl.MemSize()
+		log.Info("badger got flush memtable task",zap.Int64("mem-size(KB)", int64(sz)))
 		// Reset of itrs, mts etc. is being done below.
 		y.AssertTrue(len(itrs) == 0 && len(mts) == 0 && len(cbs) == 0)
 		itrs = append(itrs, ft.mt.sl.NewUniIterator(false))
@@ -1719,8 +1734,8 @@ func (db *DB) Flatten(workers int) error {
 		var levels []int
 		for i, l := range db.lc.levels {
 			sz := l.getTotalSize()
-			db.opt.Infof("Level: %d. %8s Size. %8s Max.\n",
-				i, hbytes(l.getTotalSize()), hbytes(t.targetSz[i]))
+			db.opt.Infof("Level: %d. %8s Size. %8s Max., stale size: %v\n",
+				i, hbytes(l.getTotalSize()), hbytes(t.targetSz[i]), hbytes(l.getTotalStaleSize()))
 			if sz > 0 {
 				levels = append(levels, i)
 			}
