@@ -684,11 +684,17 @@ func (s *levelsController) subcompact(it y.Iterator, kr keyRange, cd compactDef,
 		timeStart := time.Now()
 		var numKeys, numSkips uint64
 		var expireKeyNum,versionLessNum, metaBitMergeNum, isDeletedNum int
+		var maxExpire, minExpire uint64
+		var maxVersion, minVersion uint64
+		minExpire = math.MaxUint64
+		minVersion = math.MaxUint64
+		var bool0Num,bool1Num, bool2Num, bool3Num, bool4Num int
 		var rangeCheck int
 		var tableKr keyRange
 		for ; it.Valid(); it.Next() {
 			// See if we need to skip the prefix.
 			if len(cd.dropPrefixes) > 0 && hasAnyPrefixes(it.Key(), cd.dropPrefixes) {
+				bool0Num++
 				numSkips++
 				updateStats(it.Value())
 				continue
@@ -697,6 +703,7 @@ func (s *levelsController) subcompact(it y.Iterator, kr keyRange, cd compactDef,
 			// See if we need to skip this key.
 			if len(skipKey) > 0 {
 				if y.SameKey(it.Key(), skipKey) {
+					bool1Num++
 					numSkips++
 					updateStats(it.Value())
 					continue
@@ -750,13 +757,23 @@ func (s *levelsController) subcompact(it y.Iterator, kr keyRange, cd compactDef,
 			if vs.Meta&bitMergeEntry == 0 {
 				metaBitMergeNum++
 			}
-			if isExpired {
-				expireKeyNum++
-			}
+
 			if vs.Meta&bitDelete > 0 {
 				isDeletedNum++
-			}
+				if vs.ExpiresAt > maxExpire {
+					maxExpire = vs.ExpiresAt
+				}
+				if vs.ExpiresAt < minExpire {
+					minExpire = vs.ExpiresAt
+				}
 
+				if version > maxVersion {
+					maxVersion= version
+				}
+				if version < minVersion {
+					minVersion = version
+				}
+			}
 
 			// Do not discard entries inserted by merge operator. These entries will be
 			// discarded once they're merged
@@ -764,6 +781,10 @@ func (s *levelsController) subcompact(it y.Iterator, kr keyRange, cd compactDef,
 				// Keep track of the number of versions encountered for this key. Only consider the
 				// versions which are below the minReadTs, otherwise, we might end up discarding the
 				// only valid version for a running transaction.
+				bool2Num++
+				if isExpired {
+					expireKeyNum++
+				}
 				numVersions++
 				// Keep the current version and discard all the next versions if
 				// - The `discardEarlierVersions` bit is set OR
@@ -776,6 +797,7 @@ func (s *levelsController) subcompact(it y.Iterator, kr keyRange, cd compactDef,
 					// If this version of the key is deleted or expired, skip all the rest of the
 					// versions. Ensure that we're only removing versions below readTs.
 					skipKey = y.SafeCopy(skipKey, it.Key())
+					bool3Num++
 
 					switch {
 					// Add the key to the table only if it has not expired.
@@ -789,6 +811,7 @@ func (s *levelsController) subcompact(it y.Iterator, kr keyRange, cd compactDef,
 						// so the following key versions would be skipped.
 					default:
 						// If no overlap, we can skip all the versions, by continuing here.
+						bool4Num++
 						numSkips++
 						updateStats(vs)
 						continue // Skip adding this key.
@@ -814,8 +837,9 @@ func (s *levelsController) subcompact(it y.Iterator, kr keyRange, cd compactDef,
 				builder.Add(it.Key(), vs, vp.Len)
 			}
 		}
-		s.kv.opt.Infof("[%d] LOG Compact. Added %d keys. Skipped %d keys. Iteration took: %v, hasOverlap: %v, versionLessNum: %v, metaBitMergeNum: %v, expireKeyNum: %v, isDeletedNum: %v",
-			cd.compactorId, numKeys, numSkips, time.Since(timeStart).Round(time.Millisecond), hasOverlap, versionLessNum, metaBitMergeNum, expireKeyNum, isDeletedNum)
+		s.kv.opt.Infof("[%d] LOG Compact. isManaged: %v, Added %d keys. Skipped %d keys. Iteration took: %v, hasOverlap: %v, versionLessNum: %v, metaBitMergeNum: %v, expireKeyNum: %v, isDeletedNum: %v, bools: %v, discardTS: %v, expireAt: [%v, %v], version: [%v, %v]",
+			cd.compactorId, s.kv.orc.isManaged,numKeys, numSkips, time.Since(timeStart).Round(time.Millisecond), hasOverlap, versionLessNum, metaBitMergeNum, expireKeyNum, isDeletedNum, []int{bool0Num,bool1Num, bool2Num, bool3Num, bool4Num}, discardTs,
+			minExpire, maxExpire,minVersion, maxVersion)
 	} // End of function: addKeys
 
 	if len(kr.left) > 0 {
