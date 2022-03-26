@@ -798,8 +798,8 @@ func (s *levelsController) subcompact(it y.Iterator, kr keyRange, cd compactDef,
 				builder.Add(it.Key(), vs, vp.Len)
 			}
 		}
-		s.kv.opt.Debugf("[%d] LOG Compact. Added %d keys. Skipped %d keys. Iteration took: %v",
-			cd.compactorId, numKeys, numSkips, time.Since(timeStart).Round(time.Millisecond))
+		s.kv.opt.Infof("[%d] LOG Compact. discardTs: %v, Added %d keys. Skipped %d keys. Iteration took: %v",
+			cd.compactorId,discardTs, numKeys, numSkips, time.Since(timeStart).Round(time.Millisecond))
 	} // End of function: addKeys
 
 	if len(kr.left) > 0 {

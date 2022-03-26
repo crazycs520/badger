@@ -657,6 +657,7 @@ func (txn *Txn) commitPrecheck() error {
 // If error is nil, the transaction is successfully committed. In case of a non-nil error, the LSM
 // tree won't be updated, so there's no need for any rollback.
 func (txn *Txn) Commit() error {
+	defer txn.Discard()
 	// txn.conflictKeys can be zero if conflict detection is turned off. So we
 	// should check txn.pendingWrites.
 	if len(txn.pendingWrites) == 0 {
@@ -666,7 +667,6 @@ func (txn *Txn) Commit() error {
 	if err := txn.commitPrecheck(); err != nil {
 		return err
 	}
-	defer txn.Discard()
 
 	txnCb, err := txn.commitAndSend()
 	if err != nil {
